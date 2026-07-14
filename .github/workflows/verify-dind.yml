@@ -1,0 +1,76 @@
+name: Verify Scheme 1 (Docker-in-Docker via Socket)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: # 允许在 GitHub 网页端手动触发
+
+jobs:
+  verify-dind:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 1. Checkout code
+        uses: actions/checkout@v4
+
+      - name: 2. Create a dummy .tex file
+        run: |
+          cat << 'EOF' > main.tex
+          \documentclass{article}
+          \usepackage{xeCJK}
+          \begin{document}
+          Hello from GitHub Actions! 
+          This PDF is compiled by MiKTeX (Container B), triggered by Container A.
+          测试中文编译。
+          \end{document}
+          EOF
+          echo "✅ main.tex created."
+
+      - name: 3. Start Container A (Mount Socket & Workspace)
+        run: |
+          # 获取宿主机(Runner)的绝对工作目录路径
+          # 这是解决路径映射陷阱的关键！
+          HOST_WORKSPACE=${{ github.workspace }}
+          echo "👉 Host (Runner) absolute path is: $HOST_WORKSPACE"
+
+          # 启动容器 A (使用自带 docker cli 的 docker:latest 镜像)
+          # 将宿主机的 docker.sock 和 工作目录 挂载进容器 A
+          docker run -d --name container_a \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $HOST_WORKSPACE:/workspace \
+            -e HOST_WORKSPACE=$HOST_WORKSPACE \
+            docker:latest \
+            tail -f /dev/null
+          
+          echo "✅ Container A started."
+
+      - name: 4. Container A triggers Container B (MiKTeX) to compile
+        run: |
+          # 在容器 A 内部执行命令，启动容器 B
+          # ⚠️ 注意：这里的 -v 参数必须是宿主机(Runner)的路径，通过环境变量 $HOST_WORKSPACE 传入
+          docker exec container_a sh -c '
+            echo "🚀 Inside Container A: Triggering Container B (MiKTeX)..."
+            
+            docker run --rm \
+              -v $HOST_WORKSPACE:/miktex_data \
+              -w /miktex_data \
+              -e MIKTEX_AUTOINSTALL=1 \
+              miktex/miktex \
+              xelatex -interaction=nonstopmode main.tex
+          '
+          
+          echo "✅ Container B finished."
+
+      - name: 5. Verify the output PDF
+        run: |
+          echo "📂 Listing files in workspace:"
+          ls -l ${{ github.workspace }}
+          
+          if [ -f "${{ github.workspace }}/main.pdf" ]; then
+            echo "🎉 Success! main.pdf was generated successfully."
+          else
+            echo "❌ Failed! main.pdf not found."
+            # 打印 MiKTeX 的日志以便调试
+            cat ${{ github.workspace }}/main.log || true
+            exit 1
+          fi
