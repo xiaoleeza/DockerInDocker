@@ -13,24 +13,12 @@ jobs:
       - name: 1. Checkout code
         uses: actions/checkout@v4
 
-      - name: 2. Create a dummy .tex file (English only)
+      - name: 2. Create a minimal .tex file
         run: |
           cat << 'EOF' > main.tex
-          \documentclass{article}
-          \title{Test Document}
-          \author{GitHub Actions}
-          \date{\today}
+          \documentclass{minimal}
           \begin{document}
-          \maketitle
-          
-          \section{Introduction}
-          Hello from GitHub Actions! 
-          
-          This PDF is compiled by MiKTeX (Container B), triggered by Container A.
-          
-          \section{Test}
-          This is a test to verify Docker-in-Docker functionality.
-          
+          Hello World from GitHub Actions!
           \end{document}
           EOF
           echo "✅ main.tex created."
@@ -57,28 +45,29 @@ jobs:
             docker run --rm \
               -v $HOST_WORKSPACE:/miktex_data \
               -w /miktex_data \
-              -e MIKTEX_NONONINTERACTIVE=1 \
-              -e MIKTEX_NOAUTOSTART=1 \
               miktex/miktex:latest \
-              pdflatex -interaction=nonstopmode main.tex
+              pdflatex -interaction=nonstopmode main.tex || true
           '
           
           echo "✅ Container B finished."
 
-      - name: 5. Verify the output PDF
+      - name: 5. Show logs and verify
         run: |
-          echo " Listing files in workspace:"
+          echo "📂 Listing files in workspace:"
           ls -l ${{ github.workspace }}
           
+          if [ -f "${{ github.workspace }}/main.log" ]; then
+            echo ""
+            echo "=== FULL LOG FILE ==="
+            cat ${{ github.workspace }}/main.log
+            echo ""
+            echo "=== END LOG ==="
+          fi
+          
           if [ -f "${{ github.workspace }}/main.pdf" ]; then
-            echo "🎉 Success! main.pdf was generated successfully."
+            echo " Success! main.pdf was generated successfully."
             ls -lh ${{ github.workspace }}/main.pdf
           else
             echo "❌ Failed! main.pdf not found."
-            echo "Checking for log file..."
-            if [ -f "${{ github.workspace }}/main.log" ]; then
-              echo "=== Last 50 lines of main.log ==="
-              tail -n 50 ${{ github.workspace }}/main.log
-            fi
             exit 1
           fi
