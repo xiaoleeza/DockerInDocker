@@ -1,4 +1,4 @@
-name: Verify Scheme 1 (Fixed)
+name: Verify Scheme 1 (Docker-in-Docker via Socket)
 
 on:
   push:
@@ -13,15 +13,24 @@ jobs:
       - name: 1. Checkout code
         uses: actions/checkout@v4
 
-      - name: 2. Create a dummy .tex file (with Chinese)
+      - name: 2. Create a dummy .tex file (English only)
         run: |
           cat << 'EOF' > main.tex
           \documentclass{article}
-          \usepackage{ctex} % 使用 ctex 宏包，配合 ctexorg/ctex 镜像
+          \title{Test Document}
+          \author{GitHub Actions}
+          \date{\today}
           \begin{document}
+          \maketitle
+          
+          \section{Introduction}
           Hello from GitHub Actions! 
-          This PDF is compiled by Container B (ctexorg/ctex), triggered by Container A.
-          测试中文编译成功！
+          
+          This PDF is compiled by MiKTeX (Container B), triggered by Container A.
+          
+          \section{Test}
+          This is a test to verify Docker-in-Docker functionality.
+          
           \end{document}
           EOF
           echo "✅ main.tex created."
@@ -29,7 +38,7 @@ jobs:
       - name: 3. Start Container A (Mount Socket & Workspace)
         run: |
           HOST_WORKSPACE=${{ github.workspace }}
-          echo "👉 Host absolute path: $HOST_WORKSPACE"
+          echo "👉 Host (Runner) absolute path is: $HOST_WORKSPACE"
 
           docker run -d --name container_a \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -40,33 +49,36 @@ jobs:
           
           echo "✅ Container A started."
 
-      - name: 4. Container A triggers Container B (CTeX) to compile
+      - name: 4. Container A triggers Container B (MiKTeX) to compile
         run: |
-          # 关键点：更换为 ctexorg/ctex 镜像，它自带中文环境和 XeTeX
           docker exec container_a sh -c '
-            echo "🚀 Inside Container A: Triggering Container B..."
+            echo "🚀 Inside Container A: Triggering Container B (MiKTeX)..."
             
             docker run --rm \
               -v $HOST_WORKSPACE:/miktex_data \
               -w /miktex_data \
-              ctexorg/ctex:latest \
-              xelatex -interaction=nonstopmode main.tex
+              -e MIKTEX_NONONINTERACTIVE=1 \
+              -e MIKTEX_NOAUTOSTART=1 \
+              miktex/miktex:latest \
+              pdflatex -interaction=nonstopmode main.tex
           '
           
           echo "✅ Container B finished."
 
       - name: 5. Verify the output PDF
         run: |
-          echo "📂 Listing files:"
+          echo " Listing files in workspace:"
           ls -l ${{ github.workspace }}
           
           if [ -f "${{ github.workspace }}/main.pdf" ]; then
-            echo "🎉 Success! main.pdf generated."
-            # 尝试读取 PDF 前几行确认不是空文件
-            head -c 100 ${{ github.workspace }}/main.pdf || true
+            echo "🎉 Success! main.pdf was generated successfully."
+            ls -lh ${{ github.workspace }}/main.pdf
           else
-            echo " Failed! Checking logs..."
-            # 尝试打印编译日志
-            cat ${{ github.workspace }}/main.log || echo "No log found"
+            echo "❌ Failed! main.pdf not found."
+            echo "Checking for log file..."
+            if [ -f "${{ github.workspace }}/main.log" ]; then
+              echo "=== Last 50 lines of main.log ==="
+              tail -n 50 ${{ github.workspace }}/main.log
+            fi
             exit 1
           fi
