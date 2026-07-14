@@ -1,9 +1,9 @@
-name: Verify Scheme 1 (Docker-in-Docker via Socket)
+name: Verify Scheme 1 (Fixed)
 
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch: # 允许在 GitHub 网页端手动触发
+  workflow_dispatch:
 
 jobs:
   verify-dind:
@@ -13,28 +13,24 @@ jobs:
       - name: 1. Checkout code
         uses: actions/checkout@v4
 
-      - name: 2. Create a dummy .tex file
+      - name: 2. Create a dummy .tex file (with Chinese)
         run: |
           cat << 'EOF' > main.tex
           \documentclass{article}
-          \usepackage{xeCJK}
+          \usepackage{ctex} % 使用 ctex 宏包，配合 ctexorg/ctex 镜像
           \begin{document}
           Hello from GitHub Actions! 
-          This PDF is compiled by MiKTeX (Container B), triggered by Container A.
-          测试中文编译。
+          This PDF is compiled by Container B (ctexorg/ctex), triggered by Container A.
+          测试中文编译成功！
           \end{document}
           EOF
           echo "✅ main.tex created."
 
       - name: 3. Start Container A (Mount Socket & Workspace)
         run: |
-          # 获取宿主机(Runner)的绝对工作目录路径
-          # 这是解决路径映射陷阱的关键！
           HOST_WORKSPACE=${{ github.workspace }}
-          echo "👉 Host (Runner) absolute path is: $HOST_WORKSPACE"
+          echo "👉 Host absolute path: $HOST_WORKSPACE"
 
-          # 启动容器 A (使用自带 docker cli 的 docker:latest 镜像)
-          # 将宿主机的 docker.sock 和 工作目录 挂载进容器 A
           docker run -d --name container_a \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v $HOST_WORKSPACE:/workspace \
@@ -44,18 +40,16 @@ jobs:
           
           echo "✅ Container A started."
 
-      - name: 4. Container A triggers Container B (MiKTeX) to compile
+      - name: 4. Container A triggers Container B (CTeX) to compile
         run: |
-          # 在容器 A 内部执行命令，启动容器 B
-          # ⚠️ 注意：这里的 -v 参数必须是宿主机(Runner)的路径，通过环境变量 $HOST_WORKSPACE 传入
+          # 关键点：更换为 ctexorg/ctex 镜像，它自带中文环境和 XeTeX
           docker exec container_a sh -c '
-            echo "🚀 Inside Container A: Triggering Container B (MiKTeX)..."
+            echo "🚀 Inside Container A: Triggering Container B..."
             
             docker run --rm \
               -v $HOST_WORKSPACE:/miktex_data \
               -w /miktex_data \
-              -e MIKTEX_AUTOINSTALL=1 \
-              miktex/miktex \
+              ctexorg/ctex:latest \
               xelatex -interaction=nonstopmode main.tex
           '
           
@@ -63,14 +57,16 @@ jobs:
 
       - name: 5. Verify the output PDF
         run: |
-          echo "📂 Listing files in workspace:"
+          echo "📂 Listing files:"
           ls -l ${{ github.workspace }}
           
           if [ -f "${{ github.workspace }}/main.pdf" ]; then
-            echo "🎉 Success! main.pdf was generated successfully."
+            echo "🎉 Success! main.pdf generated."
+            # 尝试读取 PDF 前几行确认不是空文件
+            head -c 100 ${{ github.workspace }}/main.pdf || true
           else
-            echo "❌ Failed! main.pdf not found."
-            # 打印 MiKTeX 的日志以便调试
-            cat ${{ github.workspace }}/main.log || true
+            echo " Failed! Checking logs..."
+            # 尝试打印编译日志
+            cat ${{ github.workspace }}/main.log || echo "No log found"
             exit 1
           fi
