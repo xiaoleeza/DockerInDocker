@@ -16,9 +16,9 @@ jobs:
       - name: 2. Create a minimal .tex file
         run: |
           cat << 'EOF' > main.tex
-          \documentclass{minimal}
+          \documentclass{article}
           \begin{document}
-          Hello World from GitHub Actions!
+          Hello World!
           \end{document}
           EOF
           echo "✅ main.tex created."
@@ -42,11 +42,14 @@ jobs:
           docker exec container_a sh -c '
             echo "🚀 Inside Container A: Triggering Container B (MiKTeX)..."
             
-            docker run --rm \
+            # 使用 --user root 确保有写权限
+            # 使用 -e HOME=/tmp/home 设置可写的 home 目录
+            docker run --rm --user root \
               -v $HOST_WORKSPACE:/miktex_data \
+              -e HOME=/tmp/home \
               -w /miktex_data \
               miktex/miktex:latest \
-              pdflatex -interaction=nonstopmode main.tex || true
+              sh -c "mkdir -p /tmp/home && pdflatex -interaction=nonstopmode main.tex"
           '
           
           echo "✅ Container B finished."
@@ -54,18 +57,16 @@ jobs:
       - name: 5. Show logs and verify
         run: |
           echo "📂 Listing files in workspace:"
-          ls -l ${{ github.workspace }}
+          ls -la ${{ github.workspace }}
           
           if [ -f "${{ github.workspace }}/main.log" ]; then
             echo ""
-            echo "=== FULL LOG FILE ==="
-            cat ${{ github.workspace }}/main.log
-            echo ""
-            echo "=== END LOG ==="
+            echo "=== LAST 100 LINES OF LOG ==="
+            tail -n 100 ${{ github.workspace }}/main.log
           fi
           
           if [ -f "${{ github.workspace }}/main.pdf" ]; then
-            echo " Success! main.pdf was generated successfully."
+            echo "✅ Success! main.pdf was generated successfully."
             ls -lh ${{ github.workspace }}/main.pdf
           else
             echo "❌ Failed! main.pdf not found."
