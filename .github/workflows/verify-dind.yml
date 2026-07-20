@@ -1,74 +1,49 @@
-name: Verify Scheme 1 (Docker-in-Docker via Socket)
+name: Build and Push Docker Image
 
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
   workflow_dispatch:
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
-  verify-dind:
+  build-and-push:
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - name: 1. Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: 2. Create a minimal .tex file
-        run: |
-          cat << 'EOF' > main.tex
-          \documentclass{article}
-          \begin{document}
-          Hello World!
-          \end{document}
-          EOF
-          echo "✅ main.tex created."
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: 3. Start Container A (Mount Socket & Workspace)
-        run: |
-          HOST_WORKSPACE=${{ github.workspace }}
-          echo "👉 Host (Runner) absolute path is: $HOST_WORKSPACE"
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-          docker run -d --name container_a \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v $HOST_WORKSPACE:/workspace \
-            -e HOST_WORKSPACE=$HOST_WORKSPACE \
-            docker:latest \
-            tail -f /dev/null
-          
-          echo "✅ Container A started."
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      - name: 4. Container A triggers Container B (MiKTeX) to compile
-        run: |
-          docker exec container_a sh -c '
-            echo "🚀 Inside Container A: Triggering Container B (MiKTeX)..."
-            
-            # 使用 --user root 确保有写权限
-            # 使用 -e HOME=/tmp/home 设置可写的 home 目录
-            docker run --rm --user root \
-              -v $HOST_WORKSPACE:/miktex_data \
-              -e HOME=/tmp/home \
-              -w /miktex_data \
-              miktex/miktex:latest \
-              sh -c "mkdir -p /tmp/home && pdflatex -interaction=nonstopmode main.tex"
-          '
-          
-          echo "✅ Container B finished."
-
-      - name: 5. Show logs and verify
-        run: |
-          echo "📂 Listing files in workspace:"
-          ls -la ${{ github.workspace }}
-          
-          if [ -f "${{ github.workspace }}/main.log" ]; then
-            echo ""
-            echo "=== LAST 100 LINES OF LOG ==="
-            tail -n 100 ${{ github.workspace }}/main.log
-          fi
-          
-          if [ -f "${{ github.workspace }}/main.pdf" ]; then
-            echo "✅ Success! main.pdf was generated successfully."
-            ls -lh ${{ github.workspace }}/main.pdf
-          else
-            echo "❌ Failed! main.pdf not found."
-            exit 1
-          fi
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
