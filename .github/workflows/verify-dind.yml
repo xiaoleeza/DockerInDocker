@@ -8,6 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  # ghcr.io 强制要求镜像名称必须全小写，这里做一层转换确保万无一失
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
@@ -15,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      packages: write # 必须：允许推送镜像到 GHCR
 
     steps:
       - name: Checkout repository
@@ -36,6 +37,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # 自动生成标签：推送 main 分支时打 latest 标签，推送 tag 时打对应版本标签
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -45,5 +51,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # 使用 GitHub Actions 原生缓存，大幅加速后续构建
           cache-from: type=gha
           cache-to: type=gha,mode=max
