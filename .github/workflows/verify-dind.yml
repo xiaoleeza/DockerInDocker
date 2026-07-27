@@ -1,23 +1,17 @@
-name: Build and Push Docker Image
+name: Build and Export Docker Image to Release
 
 on:
   push:
-    branches: [ "main" ]
-    tags: [ "v*" ]
-  workflow_dispatch:
+    tags:
+      - 'v*' # 当推送类似 v1.0.0 的标签时自动触发
+  workflow_dispatch: # 允许在网页端手动点击运行
 
-env:
-  REGISTRY: ghcr.io
-  # ghcr.io 强制要求镜像名称必须全小写，这里做一层转换确保万无一失
-  IMAGE_NAME: ${{ github.repository }}
+permissions:
+  contents: write # 必须有 write 权限才能创建 Release 和上传文件
 
 jobs:
-  build-and-push:
+  build-and-export:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write # 必须：允许推送镜像到 GHCR
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,32 +19,41 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # 动态获取 Tag 名称，如果是手动触发则生成一个带时间戳的默认名称
+      - name: Determine Image Tag
+        id: tag
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            TAG=${GITHUB_REF#refs/tags/}
+          else
+            TAG="dev-$(date +%Y%m%d%H%M%S)"
+          fi
+          echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # 自动生成标签：推送 main 分支时打 latest 标签，推送 tag 时打对应版本标签
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha,prefix=sha-
+      # 1. 构建 Docker 镜像 (并加载到本地 runner 的 docker daemon 中)
+      - name: Build Docker image
+        run: |
+          docker buildx build --load -t tiku-base:${{ env.IMAGE_TAG }} -f ./Dockerfile .
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+      # 2. 导出镜像并使用 gzip 压缩 (极大减小文件体积)
+      - name: Save and compress Docker image
+        run: |
+          FILE_NAME="tiku-base-${{ env.IMAGE_TAG }}.tar.gz"
+          echo "FILE_NAME=$FILE_NAME" >> $GITHUB_ENV
+          # docker save 导出镜像，管道传给 gzip 压缩
+          docker save tiku-base:${{ env.IMAGE_TAG }} | gzip > $FILE_NAME
+          ls -lh $FILE_NAME
+
+      # 3. 自动创建 GitHub Release 并上传压缩包
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v2
         with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          # 使用 GitHub Actions 原生缓存，大幅加速后续构建
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tag_name: ${{ env.IMAGE_TAG }}
+          name: Release ${{ env.IMAGE_TAG }}
+          files: ${{ env.FILE_NAME }}
+          generate_release_notes: true # 自动生成 Release Notes
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
