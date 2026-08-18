@@ -1,0 +1,16 @@
+# GLM-OCR 推理服务依赖
+# 版本已与服务器 venv 核对锁定（2026-08）：torch 2.13.0 + torchvision 0.28.0 + transformers 5.3.0
+torch==2.13.0
+torchvision==0.28.0
+transformers==5.3.0
+accelerate>=0.30
+safetensors>=0.4
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+Pillow>=10.0
+PyMuPDF>=1.24
+opencv-python-headless>=4.9
+numpy>=1.26
+requests>=2.31
+redis>=5.0
